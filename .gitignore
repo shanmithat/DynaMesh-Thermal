@@ -1,0 +1,29 @@
+# CMake and Build directories
+build/
+bin/
+lib/
+*.o
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.suo
+*.user
+*.vcxproj
+*.vcxproj.filters
+*.sln
+.vs/
+
+# Visual Studio files
+.vscode/
+
+# CUDA specific
+*.i
+*.ii
+*.gpu
+*.ptx
+*.cubin
+*.fatbin
