@@ -115,7 +115,7 @@ if st.button("🚀 Trigger Engine Simulation Run", type="primary"):
         
     # --- VISUALIZATION VIEWPORTS ---
     st.header("📊 Physics Verification Matrix Windows")
-    col1, col2, col3 = np.array(st.columns(3))
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         st.subheader("Structural Density Matrix ($\rho$)")
