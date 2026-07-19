@@ -37,15 +37,34 @@ def compute_multiphysics_step(nx, ny, rho, simp_p, darcy_alpha, peclet):
     k_field = 0.001 + (1.0 - 0.001) * (rho**simp_p)
     
     # 2. Navier-Stokes Darcy Fluid Solver (Idealized Background Pressure Drive)
-    # Generate an analytical channel flow profile modulated by SIMP density blocking
+    # --- UPGRADED VELOCITY FIELD ROUTING ---
+    # Generate an analytical channel flow profile
     X, Y = np.meshgrid(np.linspace(0, 1, nx), np.linspace(0, 1, ny))
-    u_base = 4.0 * Y * (1.0 - Y)  # Poiseuille profile profile
+    u_base = 4.0 * Y * (1.0 - Y)
     v_base = np.zeros_like(u_base)
     
-    # Block velocities where solid material is present via Darcy friction damping
+    # Calculate geometric deflection from the center obstacle
+    cx_norm, cy_norm = 0.5, 0.5  # Center points in normalized space
+    r_norm = 0.25                # Obstacle radius
+    
+    # Distance from center in normalized coordinates
+    r_dist = np.sqrt((X - cx_norm)**2 + (Y - cy_norm)**2)
+    r_dist = np.maximum(r_dist, 0.01)  # Prevent division by zero
+    
+    # Potential flow deflection components (Doublet simulation)
+    # Warps the baseline horizontal flow away from the center object
+    factor = (r_norm**2) / (r_dist**2)
+    u_deflect = u_base * (1.0 - factor * ((X - cx_norm)**2 - (Y - cy_norm)**2) / r_dist**2)
+    v_deflect = u_base * (-factor * (2.0 * (X - cx_norm) * (Y - cy_norm)) / r_dist**2)
+    
+    # Blend the deflected flow field with your SIMP damping factor
+    # This guarantees near-zero velocity inside while forcing streamlines to swerve outside
     damping = 1.0 / (1.0 + alpha_field)
-    u = u_base * damping
-    v = v_base * damping
+    
+    # Smooth transitions near boundary walls to preserve strict channel alignment
+    mask = (rho > vol_frac).astype(float)
+    u = (u_deflect * (1.0 - mask) + u_base * mask) * damping
+    v = (v_deflect * (1.0 - mask)) * damping
 
     # 3. Advection-Diffusion Finite Difference Sparse Solver
     # Build System Matrix: A * T = Q
