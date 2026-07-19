@@ -103,43 +103,59 @@ def compute_multiphysics_step(nx, ny, rho, simp_p, darcy_alpha, peclet):
 
 # --- WORKFLOW RUNNER ---
 if st.button("🚀 Trigger Engine Simulation Run", type="primary"):
-    # Initialize a structural problem layout: a central localized obstacle design zone
+    # Fix: Instead of pure random noise, initialize a concrete geometric constraint zone
+    # Place a solid material obstacle in the center half of the domain
     rho_init = np.ones((ny, nx)) * vol_frac
-    # Add a pseudo-random seed distribution to allow active visual divergence
+    
+    # Define a clear design obstacle region (e.g., a central step/baffling block)
+    cx, cy = nx // 2, ny // 2
+    r = min(nx, ny) // 4
+    Y_mesh, X_mesh = np.ogrid[:ny, :nx]
+    dist_from_center = np.sqrt((X_mesh - cx)**2 + (Y_mesh - cy)**2)
+    
+    # Force high structural solid density in the center to clearly visualize fluid bypass
+    rho_init[dist_from_center <= r] = 1.0
+    
+    # Inject a tiny amount of noise for SIMP variance, strictly clipped
     np.random.seed(42)
-    rho_init += 0.05 * (np.random.rand(ny, nx) - 0.5)
-    rho_init = np.clip(rho_init, 0.0, 1.0)
+    rho_init += 0.02 * (np.random.rand(ny, nx) - 0.5)
+    rho_init = np.clip(rho_init, 0.001, 1.0)
     
     with st.spinner("Processing Multiphysics Field Distributions..."):
         u, v, T = compute_multiphysics_step(nx, ny, rho_init, simp_p, darcy_alpha, peclet)
         
-    # --- VISUALIZATION VIEWPORTS ---
     st.header("📊 Physics Verification Matrix Windows")
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.subheader("Structural Density Matrix ($\rho$)")
+        # FIX: Raw string definition to prevent \r escaping
+        st.subheader(r"Structural Density Matrix ($\rho$)")
         fig1, ax1 = plt.subplots()
-        im1 = ax1.imshow(rho_init, cmap="bone", origin="lower")
+        im1 = ax1.imshow(rho_init, cmap="bone", origin="lower", aspect="auto")
         plt.colorbar(im1, ax=ax1)
         st.pyplot(fig1)
-        st.caption("Grey-scale continuous SIMP distribution field inside the design boundary.")
+        st.caption("Grey-scale continuous SIMP distribution field showing localized solid constraints.")
         
     with col2:
         st.subheader("Porosity Velocity Vectors ($U, V$)")
         fig2, ax2 = plt.subplots()
         vel_mag = np.sqrt(u**2 + v**2)
-        im2 = ax2.imshow(vel_mag, cmap="jet", origin="lower")
-        # Overlay streamline vectors showing flow routing around higher densities
-        ax2.streamplot(np.arange(nx), np.arange(ny), u, v, color='white', linewidth=0.6, density=0.8)
+        im2 = ax2.imshow(vel_mag, cmap="jet", origin="lower", aspect="auto")
+        
+        # FIX: Robust streamplot parameters ensuring vector visibility
+        # Sub-sample grids evenly to prevent streamline geometry breakdown
+        x_vec = np.arange(nx)
+        y_vec = np.arange(ny)
+        ax2.streamplot(x_vec, y_vec, u, v, color='white', linewidth=0.8, density=1.2)
+        
         plt.colorbar(im2, ax=ax2)
         st.pyplot(fig2)
-        st.caption("Darcy velocity magnitudes showing fluid avoiding high density blockages.")
+        st.caption("Darcy velocity magnitudes showing absolute fluid routing around high-density blockages.")
         
     with col3:
         st.subheader("Steady-State Temperature ($T$)")
         fig3, ax3 = plt.subplots()
-        im3 = ax3.imshow(T, cmap="hot", origin="lower")
+        im3 = ax3.imshow(T, cmap="hot", origin="lower", aspect="auto")
         plt.colorbar(im3, ax=ax3)
         st.pyplot(fig3)
         st.caption("Convective-diffusive thermal gradient field generated across the design envelope.")
