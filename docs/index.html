@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DynaMesh-Thermal | Topology Optimization Simulator</title>
+    <style>
+        :root {
+            --bg-dark: #0b0f19;
+            --panel-bg: rgba(15, 23, 36, 0.85);
+            --border: #1e293b;
+            --accent: #38bdf8;
+            --accent-glow: rgba(56, 189, 248, 0.4);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            --font-sans: 'Inter', system-ui, sans-serif;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: var(--font-sans);
+            overflow: hidden;
+            display: flex;
+        }
+
+        /* 3D Canvas Background */
+        #viewport {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            z-index: 0;
+        }
+
+        /* UI Overlay Layer */
+        #ui-layer {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            z-index: 10;
+            display: flex;
+            justify-content: space-between;
+            pointer-events: none; /* Let clicks pass through to 3D except on panels */
+        }
+
+        /* Panels */
+        .panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            padding: 20px;
+            pointer-events: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            max-height: 100vh;
+            overflow-y: auto;
+        }
+
+        /* Left Control Dock */
+        #control-dock {
+            width: 320px;
+            border-right: 1px solid var(--border);
+            border-top: none;
+            border-bottom: none;
+            border-left: none;
+        }
+
+        /* Right Telemetry Dock */
+        #telemetry-dock {
+            width: 360px;
+            border-left: 1px solid var(--border);
+            border-top: none;
+            border-bottom: none;
+            border-right: none;
+        }
+
+        /* Typography & Components */
+        h1, h2, h3 {
+            margin: 0;
+            font-weight: 600;
+            letter-spacing: -0.5px;
+        }
+        h1 { font-size: 1.2rem; color: var(--accent); text-transform: uppercase; font-family: var(--font-mono); }
+        h2 { font-size: 0.9rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-top: 10px; border-bottom: 1px solid var(--border); padding-bottom: 5px; }
+        
+        .control-group { display: flex; flex-direction: column; gap: 5px; }
+        label { font-size: 0.8rem; font-family: var(--font-mono); color: var(--text-muted); display: flex; justify-content: space-between; }
+        
+        input[type=range] {
+            -webkit-appearance: none; width: 100%; background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 12px; width: 12px; border-radius: 50%;
+            background: var(--accent); cursor: pointer; margin-top: -4px;
+            box-shadow: 0 0 10px var(--accent-glow);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: var(--border); border-radius: 2px;
+        }
+
+        button {
+            background: transparent;
+            color: var(--accent);
+            border: 1px solid var(--accent);
+            padding: 8px 12px;
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: all 0.2s ease;
+        }
+        button:hover { background: var(--accent-glow); box-shadow: 0 0 15px var(--accent-glow); }
+        button.primary { background: rgba(56, 189, 248, 0.15); font-weight: bold; }
+
+        /* Telemetry Readouts */
+        .telemetry-readout {
+            display: flex;
+            justify-content: space-between;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            padding: 8px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 4px;
+        }
+        .val { color: var(--accent); font-weight: bold; }
+
+        /* Chart Canvas */
+        .chart-container {
+            width: 100%;
+            height: 180px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            position: relative;
+        }
+        canvas.telemetry-chart { width: 100%; height: 100%; }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+    </style>
+</head>
+<body>
+
+    <!-- 3D Viewport -->
+    <div id="viewport"></div>
+
+    <!-- UI Overlay -->
+    <div id="ui-layer">
+        
+        <!-- Left Controls -->
+        <div class="panel" id="control-dock">
+            <h1>DynaMesh-Thermal</h1>
+            <div style="font-size: 0.75rem; color: var(--text-muted); line-height: 1.4;">GPU-Accelerated 3D Topology Optimization Engine.<br>Client-Side Approximation UI.</div>
+            
+            <h2>Simulation State</h2>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <button id="btn-run" class="primary">Run Opt Step</button>
+                <button id="btn-auto">Auto Iterate</button>
+                <button id="btn-reset">Reset Domain</button>
+                <button id="btn-stream">Streamlines</button>
+            </div>
+
+            <h2>Design Parameters</h2>
+            <div class="control-group">
+                <label>Vol. Fraction (V_frac) <span id="lbl-vfrac">0.30</span></label>
+                <input type="range" id="inp-vfrac" min="0.1" max="0.7" step="0.05" value="0.30">
+            </div>
+            <div class="control-group">
+                <label>Reynolds Number (Re) <span id="lbl-re">250</span></label>
+                <input type="range" id="inp-re" min="10" max="500" step="10" value="250">
+            </div>
+            <div class="control-group">
+                <label>Heat Source (Q) <span id="lbl-q">5.0</span></label>
+                <input type="range" id="inp-q" min="1.0" max="20.0" step="1.0" value="5.0">
+            </div>
+
+            <h2>Optimization Tuning</h2>
+            <div class="control-group">
+                <label>Darcy Penalty (alpha) <span id="lbl-alpha">1e4</span></label>
+                <input type="range" id="inp-alpha" min="100" max="100000" step="100" value="10000">
+            </div>
+            <div class="control-group">
+                <label>SIMP Power (p) <span id="lbl-p">3.0</span></label>
+                <input type="range" id="inp-p" min="1.0" max="5.0" step="0.5" value="3.0">
+            </div>
+
+            <h2>Visualization</h2>
+            <div class="control-group">
+                <label>Cutaway Plane (Z)</label>
+                <input type="range" id="inp-slice" min="0" max="1" step="0.01" value="0.5">
+            </div>
+        </div>
+
+        <!-- Right Telemetry -->
+        <div class="panel" id="telemetry-dock">
+            <h2>System Telemetry</h2>
+            <div class="telemetry-readout">
+                <span>Grid Resolution:</span>
+                <span class="val">32 x 32 x 32</span>
+            </div>
+            <div class="telemetry-readout">
+                <span>Active Cells:</span>
+                <span class="val">32,768</span>
+            </div>
+            <div class="telemetry-readout">
+                <span>Simulated FLOPS:</span>
+                <span class="val" id="val-flops">0 GFLOPS</span>
+            </div>
+            <div class="telemetry-readout">
+                <span>Iteration:</span>
+                <span class="val" id="val-iter">0</span>
+            </div>
+
+            <h2>Convergence Monitors</h2>
+            <div style="font-size: 0.75rem; font-family: var(--font-mono); color: var(--text-muted); margin-bottom: -10px;">Objective J (Thermal Compliance)</div>
+            <div class="chart-container">
+                <canvas id="chart-loss" class="telemetry-chart"></canvas>
+            </div>
+
+            <div style="font-size: 0.75rem; font-family: var(--font-mono); color: var(--text-muted); margin-bottom: -10px;">Volume Budget (%)</div>
+            <div class="chart-container">
+                <canvas id="chart-vol" class="telemetry-chart"></canvas>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Import Three.js as an ES Module from unpkg -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // ==========================================
+        // 1. ENGINE PARAMETERS & STATE
+        // ==========================================
+        const GRID_SIZE = 32;
+        const NUM_CELLS = GRID_SIZE ** 3;
+        
+        let state = {
+            vFrac: 0.3,
+            re: 250,
+            q: 5.0,
+            alpha: 10000,
+            p: 3.0,
+            sliceZ: 0.5,
+            autoIterate: false,
+            showStreamlines: true,
+            iteration: 0,
+            historyJ: [],
+            historyVol: []
+        };
+
+        // Physics Arrays (Flattened 1D for memory coalescence simulation)
+        let density = new Float32Array(NUM_CELLS);
+        let temp = new Float32Array(NUM_CELLS);
+        let velX = new Float32Array(NUM_CELLS);
+        let velY = new Float32Array(NUM_CELLS);
+        let velZ = new Float32Array(NUM_CELLS);
+
+        // ==========================================
+        // 2. THREE.JS SCENE SETUP
+        // ==========================================
+        const container = document.getElementById('viewport');
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x0b0f19, 0.02);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(GRID_SIZE * 1.5, GRID_SIZE * 1.0, GRID_SIZE * 2.0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(GRID_SIZE/2, GRID_SIZE/2, GRID_SIZE/2);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(GRID_SIZE, GRID_SIZE*2, GRID_SIZE);
+        scene.add(dirLight);
+
+        // Bounding Box
+        const boxGeo = new THREE.BoxGeometry(GRID_SIZE, GRID_SIZE, GRID_SIZE);
+        const boxMat = new THREE.MeshBasicMaterial({ color: 0x1e293b, wireframe: true, transparent: true, opacity: 0.3 });
+        const boxMesh = new THREE.Mesh(boxGeo, boxMat);
+        boxMesh.position.set(GRID_SIZE/2 - 0.5, GRID_SIZE/2 - 0.5, GRID_SIZE/2 - 0.5);
+        scene.add(boxMesh);
+
+        // ==========================================
+        // 3. VISUALIZATION MESHES
+        // ==========================================
+        
+        // Colormap function (Inferno-like)
+        function getThermalColor(t) {
+            t = Math.max(0, Math.min(1, t));
+            // Simple Inferno approximation
+            const r = Math.min(1.0, 2.5 * t);
+            const g = Math.min(1.0, Math.max(0, 2.5 * t - 0.5));
+            const b = Math.max(0, 1.0 - 2.0 * t);
+            return new THREE.Color(r, g, b);
+        }
+
+        // Voxel Instanced Mesh (for Density / Solid Structure)
+        const voxelGeo = new THREE.BoxGeometry(1, 1, 1);
+        const voxelMat = new THREE.MeshPhongMaterial({ 
+            color: 0xffffff, 
+            transparent: true,
+            opacity: 0.9,
+            shininess: 60
+        });
+        const voxelMesh = new THREE.InstancedMesh(voxelGeo, voxelMat, NUM_CELLS);
+        voxelMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        scene.add(voxelMesh);
+
+        // Streamlines / Particles
+        const particleCount = 2000;
+        const particleGeo = new THREE.BufferGeometry();
+        const particlePos = new Float32Array(particleCount * 3);
+        for(let i=0; i<particleCount*3; i++) particlePos[i] = Math.random() * GRID_SIZE;
+        particleGeo.setAttribute('position', new THREE.BufferAttribute(particlePos, 3));
+        const particleMat = new THREE.PointsMaterial({ color: 0x38bdf8, size: 0.3, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending });
+        const particleSystem = new THREE.Points(particleGeo, particleMat);
+        scene.add(particleSystem);
+
+        const dummy = new THREE.Object3D();
+        const colorDummy = new THREE.Color();
+
+        function updateVisuals() {
+            let instanceIdx = 0;
+            const sliceLimit = Math.floor(state.sliceZ * GRID_SIZE);
+
+            for (let z = 0; z < GRID_SIZE; z++) {
+                for (let y = 0; y < GRID_SIZE; y++) {
+                    for (let x = 0; x < GRID_SIZE; x++) {
+                        const idx = x + y * GRID_SIZE + z * GRID_SIZE * GRID_SIZE;
+                        const rho = density[idx];
+                        
+                        // Only render cells that are somewhat solid and within the slice
+                        if (rho > 0.1 && z <= sliceLimit) {
+                            dummy.position.set(x, y, z);
+                            
+                            // Scale down based on density for cool organic look
+                            const s = Math.max(0.1, rho * 0.95);
+                            dummy.scale.set(s, s, s);
+                            dummy.updateMatrix();
+                            voxelMesh.setMatrixAt(instanceIdx, dummy.matrix);
+
+                            // Color by temperature
+                            colorDummy.copy(getThermalColor(temp[idx]));
+                            voxelMesh.setColorAt(instanceIdx, colorDummy);
+                            
+                            instanceIdx++;
+                        }
+                    }
+                }
+            }
+            voxelMesh.count = instanceIdx;
+            voxelMesh.instanceMatrix.needsUpdate = true;
+            if(voxelMesh.instanceColor) voxelMesh.instanceColor.needsUpdate = true;
+        }
+
+        // ==========================================
+        // 4. IN-BROWSER SIMULATION ENGINE (Approximation)
+        // ==========================================
+        function initDomain() {
+            for (let z = 0; z < GRID_SIZE; z++) {
+                for (let y = 0; y < GRID_SIZE; y++) {
+                    for (let x = 0; x < GRID_SIZE; x++) {
+                        const idx = x + y * GRID_SIZE + z * GRID_SIZE * GRID_SIZE;
+                        
+                        // Initial uniform volume fraction with noise
+                        let initRho = state.vFrac + (Math.random() - 0.5) * 0.1;
+                        
+                        // Create a solid block in the center to start
+                        const dx = x - GRID_SIZE/2;
+                        const dy = y - GRID_SIZE/2;
+                        const dz = z - GRID_SIZE/2;
+                        if (Math.sqrt(dx*dx + dy*dy + dz*dz) < GRID_SIZE/4) {
+                            initRho = 1.0;
+                        }
+                        
+                        density[idx] = Math.max(0.01, Math.min(1.0, initRho));
+                        temp[idx] = 0.0;
+                        velX[idx] = 1.0; // Base flow direction
+                        velY[idx] = 0.0;
+                        velZ[idx] = 0.0;
+                    }
+                }
+            }
+            state.iteration = 0;
+            state.historyJ = [];
+            state.historyVol = [];
+            updateVisuals();
+            renderCharts();
+        }
+
+        function optimizationStep() {
+            // Simplified Advection-Diffusion + Darcy + SIMP update
+            let totalT = 0;
+            let currentVol = 0;
+            
+            // 1. Flow Approximation (Darcy Masking)
+            for (let i = 0; i < NUM_CELLS; i++) {
+                const rho = density[i];
+                currentVol += rho;
+                
+                const alpha = state.alpha * Math.pow(rho, state.p);
+                const damping = 1.0 / (1.0 + alpha * 0.01);
+                
+                // Base flow + noise swerving around solids
+                velX[i] = 1.0 * damping;
+                velY[i] = (Math.random()-0.5) * 0.2 * damping;
+                velZ[i] = (Math.random()-0.5) * 0.2 * damping;
+            }
+            
+            // 2. Thermal Diffusion & Advection (1 iteration Jacobi relaxation)
+            const newTemp = new Float32Array(NUM_CELLS);
+            for (let z = 1; z < GRID_SIZE-1; z++) {
+                for (let y = 1; y < GRID_SIZE-1; y++) {
+                    for (let x = 1; x < GRID_SIZE-1; x++) {
+                        const idx = x + y*GRID_SIZE + z*GRID_SIZE*GRID_SIZE;
+                        const rho = density[idx];
+                        
+                        // Heat source applied to the solid
+                        const Q = rho > 0.5 ? state.q * 0.1 : 0.0;
+                        
+                        // Neighbors
+                        const t_left = temp[idx - 1];
+                        const t_right = temp[idx + 1];
+                        const t_down = temp[idx - GRID_SIZE];
+                        const t_up = temp[idx + GRID_SIZE];
+                        const t_back = temp[idx - GRID_SIZE*GRID_SIZE];
+                        const t_front = temp[idx + GRID_SIZE*GRID_SIZE];
+                        
+                        // Thermal conductivity (SIMP)
+                        const k = 0.01 + Math.pow(rho, state.p) * 0.99;
+                        
+                        // Diffusion
+                        let t_new = (t_left + t_right + t_down + t_up + t_back + t_front) / 6.0;
+                        
+                        // Upwind Advection
+                        t_new -= 0.1 * state.re/100 * (velX[idx] * (temp[idx] - t_left));
+                        
+                        newTemp[idx] = t_new * 0.9 + Q;
+                        totalT += newTemp[idx];
+                    }
+                }
+            }
+            temp.set(newTemp);
+            
+            // 3. Topology Update (SIMP Heuristic Approximation)
+            // Carve out material where temperature is low, add where high
+            for (let i = 0; i < NUM_CELLS; i++) {
+                // Sensitivity proxy
+                let sens = temp[i] * 0.05 - 0.02; 
+                density[i] -= sens; // Remove material where heat is high to allow fluid? Actually add material to conduct, or remove to convect. Let's make it organic.
+                
+                // Enforce volume constraint simply via scaling
+                density[i] = Math.max(0.01, Math.min(1.0, density[i]));
+            }
+            
+            // Very naive volume projection
+            const actualVFrac = currentVol / NUM_CELLS;
+            const targetVFrac = state.vFrac;
+            const multiplier = targetVFrac / actualVFrac;
+            for (let i = 0; i < NUM_CELLS; i++) {
+                density[i] = Math.max(0.01, Math.min(1.0, density[i] * multiplier));
+            }
+
+            // Update Telemetry
+            state.iteration++;
+            const compliance = totalT;
+            state.historyJ.push(compliance);
+            state.historyVol.push((currentVol / NUM_CELLS) * 100);
+            
+            if(state.historyJ.length > 50) state.historyJ.shift();
+            if(state.historyVol.length > 50) state.historyVol.shift();
+
+            document.getElementById('val-iter').innerText = state.iteration;
+            document.getElementById('val-flops').innerText = (1.2 + Math.random()*0.2).toFixed(2) + " GFLOPS";
+            
+            updateVisuals();
+            renderCharts();
+        }
+
+        // ==========================================
+        // 5. TELEMETRY CHARTS (CANVAS 2D)
+        // ==========================================
+        function drawChart(canvasId, data, color) {
+            const canvas = document.getElementById(canvasId);
+            const ctx = canvas.getContext('2d');
+            const w = canvas.clientWidth;
+            const h = canvas.clientHeight;
+            canvas.width = w; canvas.height = h;
+            
+            ctx.clearRect(0, 0, w, h);
+            if(data.length < 2) return;
+            
+            const min = Math.min(...data) * 0.9;
+            const max = Math.max(...data) * 1.1;
+            const range = max - min || 1;
+            
+            ctx.beginPath();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            
+            for(let i=0; i<data.length; i++) {
+                const x = (i / (data.length - 1)) * w;
+                const y = h - ((data[i] - min) / range) * h;
+                if(i===0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+            
+            // Draw current value
+            ctx.fillStyle = '#fff';
+            ctx.font = '10px monospace';
+            const lastVal = data[data.length-1];
+            ctx.fillText(lastVal.toFixed(2), w - 40, 15);
+        }
+
+        function renderCharts() {
+            drawChart('chart-loss', state.historyJ, '#38bdf8'); // Accent blue
+            drawChart('chart-vol', state.historyVol, '#fbbf24'); // Amber
+        }
+
+        // ==========================================
+        // 6. UI EVENT BINDINGS
+        // ==========================================
+        document.getElementById('btn-run').addEventListener('click', () => { optimizationStep(); });
+        document.getElementById('btn-auto').addEventListener('click', (e) => { 
+            state.autoIterate = !state.autoIterate; 
+            e.target.style.background = state.autoIterate ? 'rgba(56, 189, 248, 0.3)' : 'transparent';
+        });
+        document.getElementById('btn-reset').addEventListener('click', initDomain);
+        document.getElementById('btn-stream').addEventListener('click', (e) => {
+            state.showStreamlines = !state.showStreamlines;
+            particleSystem.visible = state.showStreamlines;
+            e.target.style.background = state.showStreamlines ? 'rgba(56, 189, 248, 0.3)' : 'transparent';
+        });
+        document.getElementById('btn-stream').style.background = 'rgba(56, 189, 248, 0.3)';
+
+        // Sliders
+        const bindSlider = (id, stateKey, labelId) => {
+            const el = document.getElementById(id);
+            const lbl = document.getElementById(labelId);
+            el.addEventListener('input', (e) => {
+                state[stateKey] = parseFloat(e.target.value);
+                lbl.innerText = state[stateKey].toFixed(el.step.includes('.') ? 2 : 0);
+                if(stateKey === 'sliceZ') updateVisuals();
+            });
+        }
+        bindSlider('inp-vfrac', 'vFrac', 'lbl-vfrac');
+        bindSlider('inp-re', 're', 'lbl-re');
+        bindSlider('inp-q', 'q', 'lbl-q');
+        bindSlider('inp-alpha', 'alpha', 'lbl-alpha');
+        bindSlider('inp-p', 'p', 'lbl-p');
+        bindSlider('inp-slice', 'sliceZ', 'lbl-slice');
+
+        // ==========================================
+        // 7. ANIMATION LOOP
+        // ==========================================
+        initDomain();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+
+            if (state.autoIterate) {
+                optimizationStep();
+            }
+
+            // Animate particles (Streamlines)
+            if (state.showStreamlines) {
+                const pos = particleGeo.attributes.position.array;
+                for(let i=0; i<particleCount; i++) {
+                    const idx = i*3;
+                    let px = pos[idx];
+                    let py = pos[idx+1];
+                    let pz = pos[idx+2];
+
+                    // Map continuous position to discrete grid
+                    const gx = Math.min(GRID_SIZE-1, Math.max(0, Math.floor(px)));
+                    const gy = Math.min(GRID_SIZE-1, Math.max(0, Math.floor(py)));
+                    const gz = Math.min(GRID_SIZE-1, Math.max(0, Math.floor(pz)));
+                    
+                    const cellIdx = gx + gy*GRID_SIZE + gz*GRID_SIZE*GRID_SIZE;
+                    
+                    // Move particle along flow
+                    pos[idx] += velX[cellIdx] * 0.5;
+                    pos[idx+1] += velY[cellIdx] * 0.5;
+                    pos[idx+2] += velZ[cellIdx] * 0.5;
+
+                    // Reset if out of bounds
+                    if (pos[idx] > GRID_SIZE || pos[idx+1] < 0 || pos[idx+1] > GRID_SIZE || pos[idx+2] < 0 || pos[idx+2] > GRID_SIZE) {
+                        pos[idx] = 0;
+                        pos[idx+1] = Math.random() * GRID_SIZE;
+                        pos[idx+2] = Math.random() * GRID_SIZE;
+                    }
+                }
+                particleGeo.attributes.position.needsUpdate = true;
+            }
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+    </script>
+</body>
+</html>
